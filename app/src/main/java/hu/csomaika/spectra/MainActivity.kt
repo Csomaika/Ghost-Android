@@ -207,7 +207,7 @@ class MainActivity : Activity(), SensorEventListener {
             text(c,String.format(Locale.US,"%.2f m/s²",moving),29f,629f,19f,if(moving>0.8f)android.graphics.Color.YELLOW else cyan)
             text(c,if(moving>0.8f)"MOVING" else "STABLE",276f,619f,13f,cyan)
             button(c,if(calStart>0&&!calibrated)"CALIBRATING..." else "CALIBRATE 30s",15f,665f,173f) {
-                calStart=SystemClock.elapsedRealtime();calibrated=false;calCount=0;baseline=0.0;m2cal=0.0
+                calStart=SystemClock.elapsedRealtime();calibrated=false;calCount=0;this@MainActivity.baseline=0.0;m2cal=0.0
             }
             button(c,"EVENT LOG ("+log.size+")",201f,665f,174f) {
                 android.app.AlertDialog.Builder(this@MainActivity).setTitle("ANOMALY LOG")
@@ -236,7 +236,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var sensorAccuracy=0
     private fun checkForUpdatesProxy() {
         val b=Button(this)
-        checkForUpdates(b)
+        checkUpdates(b)
     }
 
     override fun onPause() {
