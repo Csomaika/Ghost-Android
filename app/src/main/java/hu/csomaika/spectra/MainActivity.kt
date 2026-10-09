@@ -1,6 +1,14 @@
 package hu.csomaika.spectra
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.media.MediaPlayer
+import java.io.File
+import java.io.RandomAccessFile
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -163,6 +171,7 @@ class MainActivity : Activity(), SensorEventListener {
             touch.add(RectF(x,y,x+w,y+48) to run)
         }
         override fun onDraw(c:Canvas) {
+            if(audioPage){ drawAudio(c);return }
             c.drawColor(android.graphics.Color.rgb(7,13,23))
             c.save();c.scale(width/390f,width/390f)
             touch.clear()
@@ -214,10 +223,42 @@ class MainActivity : Activity(), SensorEventListener {
                     .setMessage(if(log.isEmpty())"No events recorded." else log.joinToString("\\n"))
                     .setPositiveButton("OK",null).show()
             }
-            button(c,"CHECK UPDATES",15f,726f,360f) { checkForUpdatesProxy() }
+            button(c,"AUDIO LAB  /  OPEN",15f,726f,360f) { audioPage=true;invalidate() }
             text(c,"Sensor changes do not prove paranormal activity.",20f,798f,11f,muted)
             c.restore()
             postInvalidateDelayed(60)
+        }
+        private fun drawAudio(c:Canvas) {
+            c.drawColor(android.graphics.Color.rgb(7,13,23))
+            c.save();c.scale(width/390f,width/390f);touch.clear()
+            text(c,"SPECTRA / AUDIO LAB",18f,45f,25f,cyan)
+            text(c,"LIVE MICROPHONE  /  DIGITAL ANALYSIS",18f,69f,11f,muted)
+            box(c,15f,90f,360f,177f,navy)
+            text(c,"INPUT LEVEL",29f,122f,13f,muted)
+            text(c,String.format(Locale.US,"%.1f dBFS",audioLevel),29f,184f,43f,white)
+            text(c,if(audioRecording)"● RECORDING" else "● IDLE",29f,233f,14f,if(audioRecording)cyan else muted)
+            box(c,15f,281f,360f,196f,navy)
+            text(c,"LIVE AUDIO LEVEL HISTORY",29f,311f,13f,muted)
+            if(audioHistory.size>1) {
+                val path=Path()
+                audioHistory.forEachIndexed { i,v ->
+                    val x=29+i*331f/max(1,audioHistory.size-1)
+                    val y=455f-((v+90f)/90f).coerceIn(0f,1f)*118f
+                    if(i==0)path.moveTo(x,y) else path.lineTo(x,y)
+                }
+                paint.style=Paint.Style.STROKE;paint.strokeWidth=2.5f;paint.color=cyan
+                c.drawPath(path,paint);paint.style=Paint.Style.FILL
+            }
+            box(c,15f,491f,360f,126f,navy)
+            text(c,"DOMINANT FREQUENCY",29f,521f,12f,muted)
+            text(c,String.format(Locale.US,"%.0f Hz",peakFrequency),29f,556f,29f,white)
+            text(c,String.format(Locale.US,"Peak level: %.1f dBFS",audioPeak),29f,589f,14f,cyan)
+            button(c,if(audioRecording)"■ STOP RECORDING" else "● RECORD WAV",15f,639f,360f){toggleAudio()}
+            button(c,"▶ PLAY",15f,698f,173f){playAudio()}
+            button(c,"↗ SHARE",201f,698f,174f){shareAudio()}
+            button(c,"← FIELD MONITOR",15f,756f,360f){audioPage=false;invalidate()}
+            text(c,"dBFS is not calibrated sound pressure (dB SPL).",18f,826f,11f,muted)
+            c.restore();postInvalidateDelayed(80)
         }
         private fun accuracyLabel()=if(sensorAccuracy==3)"HIGH" else "CHECK"
         private fun fieldValue(i:Int):Float= when(i){0->lastX;1->lastY;else->lastZ}
@@ -234,11 +275,111 @@ class MainActivity : Activity(), SensorEventListener {
     private var lastY=0f
     private var lastZ=0f
     private var sensorAccuracy=0
+    @Volatile private var audioRecording=false
+    @Volatile private var audioLevel=-90.0
+    @Volatile private var peakFrequency=0.0
+    @Volatile private var audioPeak=-90.0
+    private val audioHistory=ArrayDeque<Float>()
+    private var audioThread:Thread?=null
+    private var audioFile:File?=null
+    private var audioPlayer:MediaPlayer?=null
+    private var audioBytes=0
+    private var audioPage=false
+    private fun toggleAudio() {
+        if(audioRecording) { audioRecording=false; return }
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),401);return
+        }
+        val file=File(getExternalFilesDir(null),"spectra_audio_"+System.currentTimeMillis()+".wav")
+        audioFile=file
+        audioBytes=0;audioPeak=-90.0
+        audioRecording=true
+        audioThread=Thread {
+            val sampleRate=16000
+            val minBuffer=AudioRecord.getMinBufferSize(sampleRate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
+            val recorder=AudioRecord(MediaRecorder.AudioSource.MIC,sampleRate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,max(4096,minBuffer*2))
+            try {
+                if(recorder.state!=AudioRecord.STATE_INITIALIZED) { audioRecording=false;return@Thread }
+                val out=RandomAccessFile(file,"rw")
+                out.setLength(0);out.write(ByteArray(44))
+                val buffer=ShortArray(1024)
+                recorder.startRecording()
+                while(audioRecording) {
+                    val n=recorder.read(buffer,0,buffer.size)
+                    if(n<=0)continue
+                    var sum=0.0
+                    for(i in 0 until n) {
+                        val v=buffer[i].toDouble()/32768.0
+                        sum+=v*v
+                        out.write(buffer[i].toInt() and 255)
+                        out.write((buffer[i].toInt() shr 8) and 255)
+                    }
+                    audioBytes+=n*2
+                    val rms=sqrt(sum/n)
+                    audioLevel=20*kotlin.math.log10(max(0.000001,rms))
+                    audioPeak=max(audioPeak,audioLevel)
+                    val maxBin=min(150,n/2-1)
+                    var best=0.0;var index=0
+                    for(k in 2..maxBin) {
+                        var re=0.0;var im=0.0
+                        for(i in 0 until n step 4) {
+                            val phase=2*Math.PI*k*i/n
+                            re+=buffer[i]*kotlin.math.cos(phase)
+                            im-=buffer[i]*kotlin.math.sin(phase)
+                        }
+                        val power=re*re+im*im
+                        if(power>best){best=power;index=k}
+                    }
+                    peakFrequency=index*sampleRate.toDouble()/n
+                    runOnUiThread {
+                        audioHistory.addLast(audioLevel.toFloat())
+                        if(audioHistory.size>110)audioHistory.removeFirst()
+                        dashboard.invalidate()
+                    }
+                }
+                recorder.stop()
+                out.seek(0)
+                val header=java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                header.put("RIFF".toByteArray());header.putInt(audioBytes+36)
+                header.put("WAVEfmt ".toByteArray());header.putInt(16)
+                header.putShort(1);header.putShort(1);header.putInt(sampleRate)
+                header.putInt(sampleRate*2);header.putShort(2);header.putShort(16)
+                header.put("data".toByteArray());header.putInt(audioBytes)
+                out.write(header.array());out.close()
+            } catch(ex:Exception) {
+                runOnUiThread { Toast.makeText(this,"Audio error: "+ex.message,Toast.LENGTH_LONG).show() }
+            } finally { audioRecording=false;recorder.release() }
+        }.apply{start()}
+    }
+    override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+        if(requestCode==401 && grantResults.firstOrNull()==PackageManager.PERMISSION_GRANTED)toggleAudio()
+    }
+    private fun playAudio() {
+        val file=audioFile
+        if(file==null || !file.exists() || audioRecording) {
+            Toast.makeText(this,"Stop recording first",Toast.LENGTH_SHORT).show();return
+        }
+        audioPlayer?.release()
+        audioPlayer=MediaPlayer().apply {
+            setDataSource(file.absolutePath);prepare();start()
+        }
+    }
+    private fun shareAudio() {
+        val file=audioFile
+        if(file==null || !file.exists() || audioRecording) return
+        val uri=androidx.core.content.FileProvider.getUriForFile(this,packageName+".provider",file)
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type="audio/wav";putExtra(Intent.EXTRA_STREAM,uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        },"Share SPECTRA recording"))
+    }
     private fun checkForUpdatesProxy() {
         val b=Button(this)
         checkUpdates(b)
     }
 
+    override fun onDestroy() { audioRecording=false;audioPlayer?.release();super.onDestroy() }
     override fun onPause() {
         sensors.unregisterListener(this)
         super.onPause()
