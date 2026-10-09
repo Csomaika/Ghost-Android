@@ -370,7 +370,7 @@ class MainActivity : Activity(), SensorEventListener {
     private fun shareAudio() {
         val file=audioFile
         if(file==null || !file.exists() || audioRecording) return
-        val uri=Uri.fromFile(file)
+        val uri=androidx.core.content.FileProvider.getUriForFile(this,packageName+".provider",file)
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type="audio/wav";putExtra(Intent.EXTRA_STREAM,uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
