@@ -26,6 +26,8 @@ import android.graphics.RectF
 import android.os.SystemClock
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
+import android.widget.Toast
 import android.content.Intent
 import android.net.Uri
 import org.json.JSONObject
@@ -368,7 +370,7 @@ class MainActivity : Activity(), SensorEventListener {
     private fun shareAudio() {
         val file=audioFile
         if(file==null || !file.exists() || audioRecording) return
-        val uri=androidx.core.content.FileProvider.getUriForFile(this,packageName+".provider",file)
+        val uri=Uri.fromFile(file)
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type="audio/wav";putExtra(Intent.EXTRA_STREAM,uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
