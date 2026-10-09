@@ -8,6 +8,12 @@ import android.hardware.SensorManager
 import android.os.Bundle
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Button
+import android.content.Intent
+import android.net.Uri
+import org.json.JSONObject
+import java.net.URL
+import kotlin.concurrent.thread
 import android.graphics.Color
 import android.view.Gravity
 import kotlin.math.sqrt
@@ -43,6 +49,11 @@ class MainActivity : Activity(), SensorEventListener {
         vector = line("X —   Y —   Z —", 18f)
         status = line("Initializing", 16f)
         line("Anomalies are not evidence of paranormal activity. Nearby magnets, electronics and phone movement can affect measurements.", 13f)
+        val update = Button(this).apply {
+            text = "CHECK FOR UPDATES"
+            setOnClickListener { checkUpdates(this) }
+        }
+        panel.addView(update)
         setContentView(panel)
         sensors = getSystemService(SENSOR_SERVICE) as SensorManager
     }
@@ -56,6 +67,59 @@ class MainActivity : Activity(), SensorEventListener {
             sensors.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)
             status.text = "Sensor: ${sensor.name}"
         }
+    }
+
+    private fun checkUpdates(button: Button) {
+        button.isEnabled = false
+        button.text = "CHECKING..."
+        thread {
+            try {
+                val connection = URL("https://api.github.com/repos/Csomaika/Ghost-Android/releases/latest").openConnection()
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                connection.setRequestProperty("User-Agent", "SPECTRA-Android")
+                val release = JSONObject(connection.getInputStream().bufferedReader().use { it.readText() })
+                val tag = release.getString("tag_name")
+                val latest = tag.removePrefix("v")
+                val installed = packageManager.getPackageInfo(packageName, 0).versionName ?: "0.0.0"
+                val newer = compareVersion(latest, installed) > 0
+                runOnUiThread {
+                    button.isEnabled = true
+                    button.text = "CHECK FOR UPDATES"
+                    val dialog = android.app.AlertDialog.Builder(this)
+                    if (newer) {
+                        dialog.setTitle("Update available: " + tag)
+                            .setMessage("Installed: " + installed + ". Open the official GitHub release to download the APK?")
+                            .setPositiveButton("OPEN RELEASE") { _, _ ->
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.getString("html_url"))))
+                            }
+                            .setNegativeButton("CANCEL", null)
+                    } else {
+                        dialog.setMessage("You have the latest version (" + installed + ").")
+                            .setPositiveButton("OK", null)
+                    }
+                    dialog.show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    button.isEnabled = true
+                    button.text = "CHECK FOR UPDATES"
+                    android.app.AlertDialog.Builder(this)
+                        .setMessage("Cannot check releases: " + (e.message ?: "network error"))
+                        .setPositiveButton("OK", null).show()
+                }
+            }
+        }
+    }
+
+    private fun compareVersion(a: String, b: String): Int {
+        val x = a.split(".").map { it.toIntOrNull() ?: 0 }
+        val y = b.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(x.size, y.size)) {
+            val c = x.getOrElse(i) { 0 }.compareTo(y.getOrElse(i) { 0 })
+            if (c != 0) return c
+        }
+        return 0
     }
 
     override fun onPause() {
